@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Filigrane</title>
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💮</text></svg>" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+
+    <style>
+        html,
+        body {
+            height: calc(100% - 53px);
+        }
+
+        body {
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+        }
+
+        main {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+        }
+
+        footer {
+            display: grid;
+            place-items: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>💮 Filigrane</h1>
+    </header>
+    <main>
+        <section>
+            <label for="watermark">
+                Choose what to watermark
+            </label>
+            <input type="text" required id="watermark" placeholder="Specimen" value="Pour Location" />
+
+            <label for="context">
+                Add optionaly a context
+            </label>
+            <textarea
+                id="context">Ce document est mis à disposition dans le cadre de la location du 23, rue Ambroise Croizat, 44000 Nantes.</textarea>
+
+            <label for="pdf">
+                Load any number of PDF of any numbers of page
+            </label>
+            <input type="file" multiple id="pdf" />
+        </section>
+        <section id="demo">
+        </section>
+
+    </main>
+
+    <footer>
+        made by @aloisdg
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/watermarkjs@2.1.1/dist/watermark.min.js"></script>
+    <script src="https://mozilla.github.io/pdf.js/build/pdf.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <script>
+        const getLines = (ctx, text, maxWidth) => {
+            var words = text.split(" ");
+            var lines = [];
+            var currentLine = words[0];
+
+            for (var i = 1; i < words.length; i++) {
+                var word = words[i];
+                var width = ctx.measureText(currentLine + " " + word).width;
+                if (width < (maxWidth / 2)) {
+                    currentLine += " " + word;
+                } else {
+                    lines.push(currentLine);
+                    currentLine = word;
+                }
+            }
+            lines.push(currentLine);
+            return lines;
+        }
+
+        const getLinesForParagraphs = (ctx, text, maxWidth) =>
+            text
+                .split("\n")
+                .map(para => getLines(ctx, para, maxWidth))
+                .reduce((a, b) => a.concat(b), [])
+
+        const rotate = (target, text, message, scalebug) => {
+            const context = target.getContext("2d");
+            if (text) {
+                context.save();
+                const metrics = context.measureText(text);
+                const fontSize = 144 + (scalebug ? 0 : 96)
+                context.textAlign = "center";
+                context.textBaseline = "middle";
+
+                context.translate(
+                    target.width / 2 - (metrics.width / 2),
+                    target.height / 2 + fontSize / 2);
+                context.fillStyle = "#f00";
+                context.globalAlpha = 0.5;
+                context.font = `${fontSize}px Josefin Slab`;
+                context.rotate(-45 * Math.PI / 180);
+                context.fillText(text, 0, 0);
+                context.restore();
+            }
+
+            if (message) {
+                const fontSize = scalebug ? (144 / 6) : (144 / 3);
+                const gap = 10;
+
+                context.save();
+                context.fillStyle = "#0f0";
+                context.font = `${fontSize}px Josefin Slab`;
+                context.globalAlpha = 0.9;
+
+                const lines = getLinesForParagraphs(context, message, target.width);
+
+                lines.forEach((line, i) => {
+                    context.save();
+                    context.translate(
+                        Math.floor(target.width / 4),
+                        target.height / 4 /* + fontSize * lines.length / 2 */ + i * (fontSize + gap));
+
+                    context.fillText(line, 0, 0);
+                    // context.strokeStyle = "white";
+                    // context.strokeText(line, 0, 0);
+                    context.restore();
+                })
+
+                context.restore();
+            }
+            return target;
+        };
+
+        const range = (n, step) =>
+            Array.from(Array(n).keys()).map((x) => x + step ?? 0);
+
+        const getPagesFromPdf = async (arrayBuffer) => {
+            const file = new Uint8Array(arrayBuffer);
+            const pdf = await pdfjs.getDocument(file).promise;
+            const pagesRange = range(pdf.numPages, 1);
+            const pages = Promise.all(pagesRange.map((num) => pdf.getPage(num)));
+            return pages;
+        }
+
+        const loadFileAsync = (file) => new Promise((resolve, reject) => {
+            const fileReader = new FileReader();
+            fileReader.addEventListener('load', () => resolve(fileReader));
+            fileReader.addEventListener('error', (err) => reject(err));
+            fileReader.readAsArrayBuffer(file);
+        });
+
+        const renderPage = async (page) => {
+            var scale = 1.5;
+
+            var viewport = page.getViewport({
+                scale: scale,
+            });
+
+            var canvas = document.createElement("canvas");
+            var context = canvas.getContext("2d");
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            var renderContext = {
+                canvasContext: context,
+                viewport: viewport,
+            };
+            await page.render(renderContext).promise;
+            return canvas;
+        }
+
+        const blobize = (canvas) => new Promise(
+            (resolve, reject) => canvas.toBlob((blob) => resolve(blob)))
+
+        const addWatermark = (blob, text, message) =>
+            new Promise((resolve, reject) =>
+                watermark([blob])
+                    .blob((target) => rotate(target, text, message, true))
+                    .then(blob => resolve(blob)))
+
+        const readPdfAsBlobs = async (file, text, message) => {
+            const fileReader = await loadFileAsync(file)
+            const pages = await getPagesFromPdf(fileReader.result)
+            const canvases = await Promise.all(pages.map(renderPage))
+            const blobs = await Promise.all(canvases.map(blobize))
+            const watermarkedBlobs = await Promise.all(blobs.map(b => addWatermark(b, text, message)));
+            return {
+                name: file.name,
+                blobs: watermarkedBlobs
+            };
+        };
+
+        var pdfjs = window["pdfjs-dist/build/pdf"];
+        pdfjs.GlobalWorkerOptions.workerSrc =
+            "https://mozilla.github.io/pdf.js/build/pdf.worker.js";
+
+        document.getElementById("pdf").onchange = async (ev) => {
+            const targetFiles = ev.target.files;
+            if (!targetFiles) return;
+            const text = document.querySelector("#watermark").value;
+            const message = document.querySelector("#context").value;
+
+            const files = [...targetFiles];
+            const items = await Promise.all(files.map(f => readPdfAsBlobs(f, text, message)))
+
+            items.forEach(item =>
+                item.blobs.forEach((blob, i) => {
+                    console.log(item.name + " pages: " + i);
+                    saveAs(blob, `${item.name}-page${i + 1}.png`)
+                })
+            );
+        }
+
+        const options = {
+            init: (img) => {
+                img.crossOrigin = 'anonymous';
+            }
+        }
+
+
+        const updateDemo = (message, context) => {
+            watermark(['https://raw.githubusercontent.com/aloisdg/filigrane/main/cv.jpg'], options)
+                .image(target => rotate(target, message, context, false))
+                .then((img) => {
+
+                    document.getElementById('demo').innerHTML = "";
+                    document.getElementById('demo').appendChild(img);
+                    // watermark.destroy();
+                });
+        }
+
+        document.querySelector('#watermark').oninput = (e) => {
+            updateDemo(
+                e.target.value,
+                document.querySelector('#context').value);
+        }
+
+        document.querySelector('#context').onchange = (e) => {
+            updateDemo(
+                document.querySelector('#watermark').value,
+                e.target.value);
+        }
+
+        updateDemo(
+            document.querySelector('#watermark').value,
+            document.querySelector('#context').value);
+
+    </script>
+</body>
+
+</html>
