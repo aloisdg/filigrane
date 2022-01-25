@@ -41,19 +41,19 @@
     </header>
     <main>
         <section>
-            <label for="watermark">
+            <label for="diagonal">
                 Choose the main watermark <small>(empty for none)</small>
             </label>
-            <input style="width: 100%;" type="text" id="watermark" placeholder="Specimen" value="Pour Location" />
+            <input style="width: 100%;" type="text" id="diagonal" placeholder="Specimen" value="Pour Location" />
             <label for="mozaic">
                 Add a mozaic <small>(empty for none)</small>
             </label>
             <input style="width: 100%;" type="text" id="mozaic" placeholder="Specimen" value="Pour Location" />
-            <label for="context">
+            <label for="message">
                 Add a context <small>(empty for none)</small>
             </label>
-            <textarea style="width: 100%;"
-                id="context">Ce document est mis à disposition dans le cadre de la location du 221B Baker Street, Londres.</textarea>
+            <textarea style="width: 100%;" id="message">Ce document est mis à disposition dans le cadre de la location du 221B Baker Street,
+                Londres.</textarea>
             <label for="ad">
                 Help Filigrane by adding a small link to it
             </label>
@@ -75,15 +75,18 @@
     <script src="https://cdn.jsdelivr.net/npm/watermarkjs@2.1.1/dist/watermark.min.js"></script>
     <script src="https://mozilla.github.io/pdf.js/build/pdf.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"
+        integrity="sha512-xQBQYt9UcgblF6aCMrwU1NkVA7HCXaSN2oq0so80KO+y68M+n64FOcqgav4igHe6D5ObBLIf68DWv+gfBowczg=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script>
-        const getLines = (ctx, text, maxWidth) => {
-            var words = text.split(" ");
-            var lines = [];
-            var currentLine = words[0];
+        const getLines = (context, paragraph, maxWidth) => {
+            const words = paragraph.split(" ");
+            const lines = [];
+            let currentLine = words[0];
 
-            for (var i = 1; i < words.length; i++) {
-                var word = words[i];
-                var width = ctx.measureText(currentLine + " " + word).width;
+            for (let i = 1; i < words.length; i++) {
+                const word = words[i];
+                const width = context.measureText(currentLine + " " + word).width;
                 if (width < (maxWidth / 2)) {
                     currentLine += " " + word;
                 } else {
@@ -95,13 +98,13 @@
             return lines;
         }
 
-        const getLinesForParagraphs = (ctx, text, maxWidth) =>
-            text
+        const getLinesForParagraphs = (context, message, maxWidth) =>
+            message
             .split("\n")
-            .map(para => getLines(ctx, para, maxWidth))
+            .map(paragraph => getLines(context, paragraph, maxWidth))
             .reduce((a, b) => a.concat(b), [])
 
-        const rotate = (target, text, mozaic, message, ad) => {
+        const rotate = (target, diagonal, mozaic, message, ad) => {
             const context = target.getContext("2d");
             const halfDiagonal = Math.sqrt(Math.pow(target.width, 2) + Math.pow(target.height, 2)) / 2;
             const fontBase = Math.floor(halfDiagonal / 5);
@@ -133,10 +136,9 @@
                 context.restore();
             }
 
-            // diagonal
-            if (text) {
+            if (diagonal) {
                 context.save();
-                const metrics = context.measureText(text);
+                const metrics = context.measureText(diagonal);
                 context.textAlign = "center";
                 context.textBaseline = "middle";
 
@@ -147,11 +149,10 @@
                 context.globalAlpha = 0.5;
                 context.font = `${fontXL}px Josefin Slab`;
                 context.rotate(-45 * Math.PI / 180);
-                context.fillText(text, 0, 0);
+                context.fillText(diagonal, 0, 0);
                 context.restore();
             }
 
-            // block
             if (message) {
                 const gap = 10;
 
@@ -236,18 +237,19 @@
         const blobize = (canvas) => new Promise(
             (resolve, reject) => canvas.toBlob((blob) => resolve(blob)))
 
-        const addWatermark = (blob, text, message) =>
+        const addWatermark = (blob, diagonal, mozaic, message, ad) =>
             new Promise((resolve, reject) =>
                 watermark([blob])
-                .blob((target) => rotate(target, text, message, true))
+                .blob((target) => rotate(target, diagonal, mozaic, message, ad))
                 .then(blob => resolve(blob)))
 
-        const readPdfAsBlobs = async (file, text, message) => {
+        const readPdfAsBlobs = async (file, diagonal, mozaic, message, ad) => {
             const fileReader = await loadFileAsync(file)
             const pages = await getPagesFromPdf(fileReader.result)
             const canvases = await Promise.all(pages.map(renderPage))
             const blobs = await Promise.all(canvases.map(blobize))
-            const watermarkedBlobs = await Promise.all(blobs.map(b => addWatermark(b, text, message)));
+            const watermarkedBlobs = await Promise.all(blobs.map(b => addWatermark(b, diagonal, mozaic, message,
+                ad)));
             return {
                 name: file.name,
                 blobs: watermarkedBlobs
@@ -261,21 +263,30 @@
         document.getElementById("pdf").onchange = async (ev) => {
             const targetFiles = ev.target.files;
             if (!targetFiles) return;
-            const text = document.querySelector("#watermark").value;
-            const message = document.querySelector("#context").value;
+            const diagonal = document.querySelector("#diagonal").value;
+            const mozaic = document.querySelector("#mozaic").value;
+            const message = document.querySelector("#message").value;
+            const ad = document.querySelector("#ad").checked;
 
             const files = [...targetFiles];
-            const items = await Promise.all(files.map(f => readPdfAsBlobs(f, text, message)))
+            const items = await Promise.all(files.map(f => readPdfAsBlobs(f, diagonal, mozaic, message, ad)))
 
-            items.forEach(item =>
+            const zip = new JSZip();
+            const zipOptions = {
+                type: "blob"
+            };
+            const blobsWithName = items.forEach(item => {
+                const folder = zip.folder(item.name);
                 item.blobs.forEach((blob, i) => {
-                    console.log(item.name + " pages: " + i);
-                    if (item.blobs.length == 0)
-                        saveAs(blob, `${item.name}.png`)
-                    else
-                        saveAs(blob, `${item.name}-page${i + 1}.png`)
+                    const fileName = item.blobs.length == 1 ?
+                        `${item.name}.png` :
+                        `${item.name}-page${i + 1}.png`;
+                    folder.file(fileName, blob);
                 })
-            );
+            });
+
+            const blobZip = await zip.generateAsync(zipOptions)
+            saveAs(blobZip, "appart.zip");
         }
 
         const options = {
@@ -285,9 +296,9 @@
         }
 
 
-        const updateDemo = (message, mozaic, context, ad) => {
+        const updateDemo = (diagonal, mozaic, message, ad) => {
             watermark(['https://raw.githubusercontent.com/aloisdg/filigrane/main/cv.jpg'], options)
-                .image(target => rotate(target, message, mozaic, context, ad))
+                .image(target => rotate(target, diagonal, mozaic, message, ad))
                 .then((img) => {
                     document.getElementById('demo').innerHTML = "";
                     document.getElementById('demo').appendChild(img);
@@ -295,17 +306,17 @@
                 });
         }
 
-        document.querySelector('#watermark').oninput = (e) => {
+        document.querySelector('#diagonal').oninput = (e) => {
             updateDemo(
                 e.target.value,
                 document.querySelector('#mozaic').value,
-                document.querySelector('#context').value,
+                document.querySelector('#message').value,
                 document.querySelector('#ad').checked);
         }
 
-        document.querySelector('#context').onchange = (e) => {
+        document.querySelector('#message').onchange = (e) => {
             updateDemo(
-                document.querySelector('#watermark').value,
+                document.querySelector('#diagonal').value,
                 document.querySelector('#mozaic').value,
                 e.target.value,
                 document.querySelector('#ad').checked);
@@ -313,24 +324,24 @@
 
         document.querySelector('#mozaic').onchange = (e) => {
             updateDemo(
-                document.querySelector('#watermark').value,
+                document.querySelector('#diagonal').value,
                 e.target.value,
-                document.querySelector('#context').value,
+                document.querySelector('#message').value,
                 document.querySelector('#ad').checked);
         }
 
         document.querySelector('#ad').onclick = (e) => {
             updateDemo(
-                document.querySelector('#watermark').value,
+                document.querySelector('#diagonal').value,
                 document.querySelector('#mozaic').value,
-                document.querySelector('#context').value,
+                document.querySelector('#message').value,
                 e.target.checked);
         }
 
         updateDemo(
-            document.querySelector('#watermark').value,
+            document.querySelector('#diagonal').value,
             document.querySelector('#mozaic').value,
-            document.querySelector('#context').value,
+            document.querySelector('#message').value,
             document.querySelector('#ad').checked);
     </script>
 </body>
