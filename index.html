@@ -42,16 +42,22 @@
     <main>
         <section>
             <label for="watermark">
-                Choose what to watermark
+                Choose the main watermark <small>(empty for none)</small>
             </label>
-            <input type="text" required id="watermark" placeholder="Specimen" value="Pour Location" />
-
+            <input style="width: 100%;" type="text" id="watermark" placeholder="Specimen" value="Pour Location" />
+            <label for="mozaic">
+                Add a mozaic <small>(empty for none)</small>
+            </label>
+            <input style="width: 100%;" type="text" id="mozaic" placeholder="Specimen" value="Pour Location" />
             <label for="context">
-                Add optionaly a context
+                Add a context <small>(empty for none)</small>
             </label>
-            <textarea
+            <textarea style="width: 100%;"
                 id="context">Ce document est mis à disposition dans le cadre de la location du 221B Baker Street, Londres.</textarea>
-
+            <label for="ad">
+                Help Filigrane by adding a small link to it
+            </label>
+            <input type="checkbox" id="ad" checked />
             <label for="pdf">
                 Load any number of PDF of any numbers of page
             </label>
@@ -91,37 +97,67 @@
 
         const getLinesForParagraphs = (ctx, text, maxWidth) =>
             text
-                .split("\n")
-                .map(para => getLines(ctx, para, maxWidth))
-                .reduce((a, b) => a.concat(b), [])
+            .split("\n")
+            .map(para => getLines(ctx, para, maxWidth))
+            .reduce((a, b) => a.concat(b), [])
 
-        const rotate = (target, text, message, scalebug) => {
+        const rotate = (target, text, mozaic, message, ad) => {
             const context = target.getContext("2d");
+            const halfDiagonal = Math.sqrt(Math.pow(target.width, 2) + Math.pow(target.height, 2)) / 2;
+            const fontBase = Math.floor(halfDiagonal / 5);
+            const fontXL = fontBase;
+            const fontM = fontBase / 3;
+            const fontXS = fontBase / 4;
+            const fontXXS = fontBase / 8;
+
+            //mozaic
+            if (mozaic) {
+                context.save();
+                context.fillStyle = "#f00";
+                context.globalAlpha = 0.15;
+                context.font = `${fontXS}px serif`;
+                const metrics = context.measureText(mozaic);
+                context.translate(0, 0);
+                const gap = 2 * metrics.width / 3;
+                for (let i = 0; i < target.width; i += metrics.width - gap) {
+                    for (let j = 0; j < target.height; j += fontXS + gap) {
+                        context.save();
+                        context.textAlign = "center";
+                        context.textBaseline = "middle";
+                        context.translate(i + (metrics.width - gap) / 2, j + (fontXS + gap) / 2);
+                        context.rotate(-45 * Math.PI / 180);
+                        context.fillText(mozaic, 0, 0);
+                        context.restore();
+                    }
+                }
+                context.restore();
+            }
+
+            // diagonal
             if (text) {
                 context.save();
                 const metrics = context.measureText(text);
-                const fontSize = 144 + (scalebug ? 0 : 96)
                 context.textAlign = "center";
                 context.textBaseline = "middle";
 
                 context.translate(
                     target.width / 2 - (metrics.width / 2),
-                    target.height / 2 + fontSize / 2);
+                    target.height / 2 + fontXL / 2);
                 context.fillStyle = "#f00";
                 context.globalAlpha = 0.5;
-                context.font = `${fontSize}px Josefin Slab`;
+                context.font = `${fontXL}px Josefin Slab`;
                 context.rotate(-45 * Math.PI / 180);
                 context.fillText(text, 0, 0);
                 context.restore();
             }
 
+            // block
             if (message) {
-                const fontSize = scalebug ? (144 / 6) : (144 / 3);
                 const gap = 10;
 
                 context.save();
                 context.fillStyle = "#0f0";
-                context.font = `${fontSize}px Josefin Slab`;
+                context.font = `${fontM}px Josefin Slab`;
                 context.globalAlpha = 0.9;
 
                 const lines = getLinesForParagraphs(context, message, target.width);
@@ -130,7 +166,8 @@
                     context.save();
                     context.translate(
                         Math.floor(target.width / 4),
-                        target.height / 4 /* + fontSize * lines.length / 2 */ + i * (fontSize + gap));
+                        target.height / 4 /* + fontM * lines.length / 2 */ + i * (fontM + gap)
+                    );
 
                     context.fillText(line, 0, 0);
                     // context.strokeStyle = "white";
@@ -140,11 +177,26 @@
 
                 context.restore();
             }
+
+            if (ad) {
+                const gap = 2;
+                const adText = "made with filigrane.netlify.app 💮";
+                context.save();
+                context.fillStyle = "#ff1493";
+                context.font = `${fontXXS}px Josefin Slab`;
+                context.globalAlpha = 0.9;
+                console.log((target.height - fontM) / 2);
+                // context.translate(0, 0);
+                context.fillText(adText,
+                    target.width - gap * 10 - context.measureText(adText).width,
+                    target.height - gap - fontXXS);
+                context.restore();
+            }
             return target;
         };
 
         const range = (n, step) =>
-            Array.from(Array(n).keys()).map((x) => x + step ?? 0);
+            Array.from(Array(n).keys()).map((x) => x + (step ? step : 0));
 
         const getPagesFromPdf = async (arrayBuffer) => {
             const file = new Uint8Array(arrayBuffer);
@@ -187,8 +239,8 @@
         const addWatermark = (blob, text, message) =>
             new Promise((resolve, reject) =>
                 watermark([blob])
-                    .blob((target) => rotate(target, text, message, true))
-                    .then(blob => resolve(blob)))
+                .blob((target) => rotate(target, text, message, true))
+                .then(blob => resolve(blob)))
 
         const readPdfAsBlobs = async (file, text, message) => {
             const fileReader = await loadFileAsync(file)
@@ -218,7 +270,10 @@
             items.forEach(item =>
                 item.blobs.forEach((blob, i) => {
                     console.log(item.name + " pages: " + i);
-                    saveAs(blob, `${item.name}-page${i + 1}.png`)
+                    if (item.blobs.length == 0)
+                        saveAs(blob, `${item.name}.png`)
+                    else
+                        saveAs(blob, `${item.name}-page${i + 1}.png`)
                 })
             );
         }
@@ -230,11 +285,10 @@
         }
 
 
-        const updateDemo = (message, context) => {
+        const updateDemo = (message, mozaic, context, ad) => {
             watermark(['https://raw.githubusercontent.com/aloisdg/filigrane/main/cv.jpg'], options)
-                .image(target => rotate(target, message, context, false))
+                .image(target => rotate(target, message, mozaic, context, ad))
                 .then((img) => {
-
                     document.getElementById('demo').innerHTML = "";
                     document.getElementById('demo').appendChild(img);
                     // watermark.destroy();
@@ -244,19 +298,40 @@
         document.querySelector('#watermark').oninput = (e) => {
             updateDemo(
                 e.target.value,
-                document.querySelector('#context').value);
+                document.querySelector('#mozaic').value,
+                document.querySelector('#context').value,
+                document.querySelector('#ad').checked);
         }
 
         document.querySelector('#context').onchange = (e) => {
             updateDemo(
                 document.querySelector('#watermark').value,
-                e.target.value);
+                document.querySelector('#mozaic').value,
+                e.target.value,
+                document.querySelector('#ad').checked);
+        }
+
+        document.querySelector('#mozaic').onchange = (e) => {
+            updateDemo(
+                document.querySelector('#watermark').value,
+                e.target.value,
+                document.querySelector('#context').value,
+                document.querySelector('#ad').checked);
+        }
+
+        document.querySelector('#ad').onclick = (e) => {
+            updateDemo(
+                document.querySelector('#watermark').value,
+                document.querySelector('#mozaic').value,
+                document.querySelector('#context').value,
+                e.target.checked);
         }
 
         updateDemo(
             document.querySelector('#watermark').value,
-            document.querySelector('#context').value);
-
+            document.querySelector('#mozaic').value,
+            document.querySelector('#context').value,
+            document.querySelector('#ad').checked);
     </script>
 </body>
 
