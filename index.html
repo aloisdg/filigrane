@@ -27,6 +27,11 @@
             gap: 40px;
         }
 
+        #pool {
+            max-height: 200px;
+            overflow: auto;
+        }
+
         footer {
             display: grid;
             place-items: center;
@@ -38,22 +43,25 @@
 
     <header>
         <h1>💮 Filigrane</h1>
+        <h2>Fight impersonations by watermarking your documents and freezing them as images</h2>
     </header>
     <main>
         <section>
             <label for="diagonal">
                 Choose the main watermark <small>(empty for none)</small>
             </label>
-            <input style="width: 100%;" type="text" id="diagonal" placeholder="Specimen" value="Pour Location" />
+            <input style="width: 100%; box-sizing: border-box;" type="text" id="diagonal" placeholder="Specimen"
+                value="Pour Location" />
             <label for="mozaic">
                 Add a mozaic <small>(empty for none)</small>
             </label>
-            <input style="width: 100%;" type="text" id="mozaic" placeholder="Specimen" value="Pour Location" />
+            <input style="width: 100%; box-sizing: border-box;" type="text" id="mozaic" placeholder="Specimen"
+                value="Pour Location" />
             <label for="message">
                 Add a context <small>(empty for none)</small>
             </label>
-            <textarea style="width: 100%;" id="message">Ce document est mis à disposition dans le cadre de la location du 221B Baker Street,
-                Londres.</textarea>
+            <textarea style="width: 100%;"
+                id="message">Ce document est mis à disposition dans le cadre de la location du 221B Baker Street, Londres.</textarea>
             <label for="ad">
                 Help Filigrane by adding a small link to it
             </label>
@@ -61,7 +69,10 @@
             <label for="pdf">
                 Load any number of PDF of any numbers of page
             </label>
-            <input type="file" multiple id="pdf" />
+            <input type="file" multiple id="pdf" accept=".pdf" />
+            <ul id="pool" style="list-style: none; padding-left: 10px;">
+            </ul>
+            <button id="export" type="button">Export</button>
         </section>
         <section id="demo">
         </section>
@@ -69,7 +80,7 @@
     </main>
 
     <footer>
-        made by @aloisdg
+        <span>made by <a href="https://github.com/aloisdg/" title="My GitHub">@aloisdg</a></span>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/watermarkjs@2.1.1/dist/watermark.min.js"></script>
@@ -186,7 +197,6 @@
                 context.fillStyle = "#ff1493";
                 context.font = `${fontXXS}px Josefin Slab`;
                 context.globalAlpha = 0.9;
-                console.log((target.height - fontM) / 2);
                 // context.translate(0, 0);
                 context.fillText(adText,
                     target.width - gap * 10 - context.measureText(adText).width,
@@ -260,6 +270,9 @@
         pdfjs.GlobalWorkerOptions.workerSrc =
             "https://mozilla.github.io/pdf.js/build/pdf.worker.js";
 
+        const _files = new Map();
+        let _id = 0;
+
         document.getElementById("pdf").onchange = async (ev) => {
             const targetFiles = ev.target.files;
             if (!targetFiles) return;
@@ -267,8 +280,34 @@
             const mozaic = document.querySelector("#mozaic").value;
             const message = document.querySelector("#message").value;
             const ad = document.querySelector("#ad").checked;
-
             const files = [...targetFiles];
+
+            files.forEach(file => {
+                const child = document.createElement('li');
+                const span = document.createElement('span');
+                span.textContent = file.name;
+                const button = document.createElement('button');
+                button.textContent = "❌";
+                button.style.padding = 0;
+                button.onclick = (e) => {
+                    _files.delete(
+                        `${e.target.parentElement.dataset.id}-${e.target.nextElementSibling.textContent}`
+                    );
+                    e.target.parentElement.remove();
+                };
+                child.appendChild(button);
+                child.appendChild(span);
+                child.dataset.id = _id;
+
+                document.querySelector('#pool').appendChild(child)
+                _files.set(`${_id}-${file.name}`, file);
+                _id++;
+            })
+            return;
+        }
+
+        const exportZip = async (diagonal, mozaic, message, ad) => {
+            const files = Array.from(_files.values())
             const items = await Promise.all(files.map(f => readPdfAsBlobs(f, diagonal, mozaic, message, ad)))
 
             const zip = new JSZip();
@@ -276,13 +315,12 @@
                 type: "blob"
             };
             const blobsWithName = items.forEach(item => {
+                if (item.blobs.length === 1) {
+                    zip.file(`${item.name}.png`, item.blobs[0]);
+                    return;
+                };
                 const folder = zip.folder(item.name);
-                item.blobs.forEach((blob, i) => {
-                    const fileName = item.blobs.length == 1 ?
-                        `${item.name}.png` :
-                        `${item.name}-page${i + 1}.png`;
-                    folder.file(fileName, blob);
-                })
+                item.blobs.forEach((blob, i) => folder.file(`${item.name}-page${i + 1}.png`, blob))
             });
 
             const blobZip = await zip.generateAsync(zipOptions)
@@ -293,6 +331,15 @@
             init: (img) => {
                 img.crossOrigin = 'anonymous';
             }
+        }
+
+        document.querySelector("#export").onclick = async () => {
+            if (_files.size === 0) return;
+            const diagonal = document.querySelector("#diagonal").value;
+            const mozaic = document.querySelector("#mozaic").value;
+            const message = document.querySelector("#message").value;
+            const ad = document.querySelector("#ad").checked;
+            await exportZip(diagonal, mozaic, message, ad);
         }
 
 
